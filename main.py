@@ -1,6 +1,16 @@
 import h5py
 import random
 import pandas as pd
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+CSV_PATH = os.getenv("CSV_PATH")
+HDF5_PATH = os.getenv("HDF5_PATH")
+OUTPUT_PATH = os.getenv("OUTPUT_PATH")
+NUM_CSV_TRACKS = int(os.getenv("NUM_CSV_TRACKS"))
+NUM_EXTRA_TRACKS = int(os.getenv("NUM_EXTRA_TRACKS"))
 
 
 def create_subset_hdf5(
@@ -85,14 +95,6 @@ def create_subset_hdf5(
 
 
 if __name__ == "__main__":
-    original_hdf5_path = "data/msd_summary_file.h5"
-    csv_path = "data/Music Info.csv"
-    output_hdf5_path = "output/msd-summary-subset.h5"
-
     create_subset_hdf5(
-        original_hdf5_path,
-        csv_path,
-        output_hdf5_path,
-        num_csv_tracks=10,
-        num_extra_tracks=5,
+        HDF5_PATH, CSV_PATH, OUTPUT_PATH, NUM_CSV_TRACKS, NUM_EXTRA_TRACKS
     )

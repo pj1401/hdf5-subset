@@ -13,3 +13,12 @@ wheels/
 # CSV and hdf5 files
 data/
 output/
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
