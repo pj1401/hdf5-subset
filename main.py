@@ -66,7 +66,7 @@ def create_subset_hdf5(
     # Step 1: Get the first n track_ids from the CSV
     csv_chunks = read_csv_music_info(csv_path, num_csv_tracks, CHUNK_SIZE)
     csv_track_ids = get_csv_track_ids(csv_chunks)
-    print(f"Read {num_csv_tracks} track_ids from CSV.")
+    print(f"Read {len(csv_track_ids)} track_ids from CSV.")
 
     # Step 2: Open the original HDF5 file and find the indices of the CSV tracks
     with h5py.File(original_hdf5_path, "r") as f:
@@ -75,8 +75,9 @@ def create_subset_hdf5(
         track_ids = [
             tid.decode("utf-8").strip().upper() for tid in analysis_songs["track_id"]
         ]
+        total_tracks = len(track_ids)
 
-        # Find the indices of the CSV tracks
+        # Step 3: Find the indices of the CSV tracks
         csv_indices = []
         for track_id in csv_track_ids:
             try:
@@ -90,32 +91,10 @@ def create_subset_hdf5(
                 f"None of the first {num_csv_tracks} track IDs from the CSV were found in the HDF5 file."
             )
 
-        print(f"Found CSV tracks at indices: {csv_indices}")
+        print(f"Found {len(csv_indices)} CSV track IDs in HDF5 data.")
 
-        # Step 3: Randomly sample additional track indices
-        all_indices = list(
-            set(range(len(track_ids))) - set(csv_indices)
-        )  # Exclude CSV tracks
-        extra_indices = random.sample(
-            all_indices, min(num_extra_tracks, len(all_indices))
-        )
-
-        # Combine the indices
-        subset_indices = csv_indices + extra_indices
-        subset_indices = sorted(set(subset_indices))  # Remove duplicates and sort
-
-        print(
-            f"Selected {len(subset_indices)} tracks for subset (including {len(csv_indices)} CSV tracks)."
-        )
-
-        # Step 4: Extract data for these indices from all groups
-        subset_data = {}
-        for group_name in f.keys():
-            subset_data[group_name] = {}
-            for dataset_name in f[group_name].keys():
-                dataset = f[group_name][dataset_name]
-                # Extract rows for the subset_indices
-                subset_data[group_name][dataset_name] = dataset[subset_indices]
+        # Step 4: Randomly sample additional track indices
+        subset_indices = get_subset_indices(csv_indices, total_tracks, num_extra_tracks)
 
         # Step 5: Extract only the needed fields for each group.
         analysis_subset = _filter_structured_array(
@@ -172,6 +151,30 @@ def get_csv_track_ids(chunks: Iterator[pd.DataFrame]) -> list[str]:
         chunk["track_id"] = chunk["track_id"].astype("str").str.strip().str.upper()
         track_ids.update(chunk["track_id"].to_numpy())
     return list(track_ids)
+
+
+def get_subset_indices(
+    csv_indices: list[int], total_tracks: int, num_extra_tracks: int
+):
+    """
+    Get the indices for the subset.
+    """
+    csv_set = set(csv_indices)
+
+    # List of indexes that are not listed in the CSV file.
+    remaining = [i for i in range(total_tracks) if i not in csv_set]
+
+    # Randomise extra indices.
+    extra_indices = random.sample(remaining, min(num_extra_tracks, len(remaining)))
+
+    # Join sets and sort.
+    subset_indices = sorted(csv_set | set(extra_indices))
+
+    print(
+        f"Selected {len(subset_indices)} tracks for subset "
+        f"({len(csv_indices)} from CSV, {len(extra_indices)} random)."
+    )
+    return subset_indices
 
 
 if __name__ == "__main__":
