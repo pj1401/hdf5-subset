@@ -30,22 +30,6 @@ ANALYSIS_FIELDS = ["track_id"]
 METADATA_FIELDS = ["release", "release_7digitalid"]
 
 
-def _filter_structured_array(
-    arr: np.ndarray,
-    fields: list[str],
-    indices: list[int],
-) -> np.ndarray:
-    """Return a new structured array containing only `fields` at `indices`."""
-    import numpy as np
-
-    sub = arr[indices]
-    dtype = [(f, sub.dtype[f]) for f in fields if f in sub.dtype.names]
-    out = np.empty(len(sub), dtype=dtype)
-    for f, _ in dtype:
-        out[f] = sub[f]
-    return out
-
-
 def create_subset_hdf5(
     original_hdf5_path: str,
     csv_path: str,
@@ -64,8 +48,8 @@ def create_subset_hdf5(
         num_extra_tracks: Number of additional random tracks to include.
     """
     # Step 1: Get the first n track_ids from the CSV
-    csv_chunks = read_csv_music_info(csv_path, num_csv_tracks, CHUNK_SIZE)
-    csv_track_ids = get_csv_track_ids(csv_chunks)
+    csv_chunks = _read_csv_music_info(csv_path, num_csv_tracks, CHUNK_SIZE)
+    csv_track_ids = _get_csv_track_ids(csv_chunks)
     print(f"Read {len(csv_track_ids)} track_ids from CSV.")
 
     # Step 2: Open the original HDF5 file and find the indices of the CSV tracks
@@ -78,23 +62,13 @@ def create_subset_hdf5(
         total_tracks = len(track_ids)
 
         # Step 3: Find the indices of the CSV tracks
-        csv_indices = []
-        for track_id in csv_track_ids:
-            try:
-                index = track_ids.index(track_id)
-                csv_indices.append(index)
-            except ValueError:
-                print(f"Warning: Track ID {track_id} not found in the HDF5 file.")
-
-        if not csv_indices:
-            raise ValueError(
-                f"None of the first {num_csv_tracks} track IDs from the CSV were found in the HDF5 file."
-            )
-
+        csv_indices = _get_csv_indices(csv_track_ids, track_ids)
         print(f"Found {len(csv_indices)} CSV track IDs in HDF5 data.")
 
         # Step 4: Randomly sample additional track indices
-        subset_indices = get_subset_indices(csv_indices, total_tracks, num_extra_tracks)
+        subset_indices = _get_subset_indices(
+            csv_indices, total_tracks, num_extra_tracks
+        )
 
         # Step 5: Extract only the needed fields for each group.
         analysis_subset = _filter_structured_array(
@@ -117,7 +91,7 @@ def create_subset_hdf5(
     print(f"Subset HDF5 file saved to: {output_hdf5_path}")
 
 
-def read_csv_music_info(
+def _read_csv_music_info(
     file_path: str, nrows: int, chunk_size: int
 ) -> Iterator[pd.DataFrame]:
     """
@@ -137,7 +111,7 @@ def read_csv_music_info(
     )
 
 
-def get_csv_track_ids(chunks: Iterator[pd.DataFrame]) -> list[str]:
+def _get_csv_track_ids(chunks: Iterator[pd.DataFrame]) -> list[str]:
     """
     Get a list of track IDs from the music info chunks.
 
@@ -153,9 +127,28 @@ def get_csv_track_ids(chunks: Iterator[pd.DataFrame]) -> list[str]:
     return list(track_ids)
 
 
-def get_subset_indices(
+def _get_csv_indices(csv_track_ids: list[str], track_ids: list[str]) -> list[int]:
+    """
+    Get the indices of the CSV tracks in the HDF5 file.
+    """
+    csv_indices = []
+    for track_id in csv_track_ids:
+        try:
+            index = track_ids.index(track_id)
+            csv_indices.append(index)
+        except ValueError:
+            print(f"Warning: Track ID {track_id} not found in the HDF5 file.")
+
+    if not csv_indices:
+        raise ValueError(
+            f"None of the first {len(csv_track_ids)} track IDs from the CSV were found in the HDF5 file."
+        )
+    return csv_indices
+
+
+def _get_subset_indices(
     csv_indices: list[int], total_tracks: int, num_extra_tracks: int
-):
+) -> list[int]:
     """
     Get the indices for the subset.
     """
@@ -175,6 +168,22 @@ def get_subset_indices(
         f"({len(csv_indices)} from CSV, {len(extra_indices)} random)."
     )
     return subset_indices
+
+
+def _filter_structured_array(
+    arr: np.ndarray,
+    fields: list[str],
+    indices: list[int],
+) -> np.ndarray:
+    """Return a new structured array containing only `fields` at `indices`."""
+    import numpy as np
+
+    sub = arr[indices]
+    dtype = [(f, sub.dtype[f]) for f in fields if f in sub.dtype.names]
+    out = np.empty(len(sub), dtype=dtype)
+    for f, _ in dtype:
+        out[f] = sub[f]
+    return out
 
 
 if __name__ == "__main__":
