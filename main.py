@@ -3,6 +3,7 @@ Script that creates a subset of the msd_summary_file.
 module: main
 """
 
+from collections.abc import Iterator
 import h5py
 import random
 import pandas as pd
@@ -17,6 +18,7 @@ HDF5_PATH = os.getenv("HDF5_PATH")
 OUTPUT_PATH = os.getenv("OUTPUT_PATH")
 NUM_CSV_TRACKS = int(os.getenv("NUM_CSV_TRACKS"))
 NUM_EXTRA_TRACKS = int(os.getenv("NUM_EXTRA_TRACKS"))
+CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", 5000))
 
 # Only copy data that is needed for the seed script.
 DATASETS_TO_COPY = {
@@ -62,9 +64,9 @@ def create_subset_hdf5(
         num_extra_tracks: Number of additional random tracks to include.
     """
     # Step 1: Get the first n track_ids from the CSV
-    csv_df = pd.read_csv(csv_path, nrows=num_csv_tracks)  # Read only the first n rows
-    csv_track_ids = csv_df["track_id"].str.strip().str.upper().tolist()
-    print(f"First {num_csv_tracks} track_ids in CSV: {csv_track_ids}")
+    csv_chunks = read_csv_music_info(csv_path, num_csv_tracks, CHUNK_SIZE)
+    csv_track_ids = get_csv_track_ids(csv_chunks)
+    print(f"Read {num_csv_tracks} track_ids from CSV.")
 
     # Step 2: Open the original HDF5 file and find the indices of the CSV tracks
     with h5py.File(original_hdf5_path, "r") as f:
@@ -134,6 +136,42 @@ def create_subset_hdf5(
         metadata_group.create_dataset("songs", data=metadata_subset)
 
     print(f"Subset HDF5 file saved to: {output_hdf5_path}")
+
+
+def read_csv_music_info(
+    file_path: str, nrows: int, chunk_size: int
+) -> Iterator[pd.DataFrame]:
+    """
+    Read the CSV music info file.
+
+    :param file_path: Path to the CSV file.
+    :type file_path: str
+    :param nrows: Number of tracks from the CSV file.
+    :type nrows: int
+    :param chunk_size: The number of rows in each chunk.
+    :type chunk_size: int
+    :return: An Iterator with the music info chunks.
+    :rtype: Iterator[DataFrame]
+    """
+    return pd.read_csv(
+        file_path, nrows=nrows, chunksize=chunk_size, usecols=["track_id"]
+    )
+
+
+def get_csv_track_ids(chunks: Iterator[pd.DataFrame]) -> list[str]:
+    """
+    Get a list of track IDs from the music info chunks.
+
+    :param chunks: An Iterator with the music info chunks.
+    :type chunks: Iterator[pd.DataFrame]
+    :return: A list of track IDs.
+    :rtype: list[str]
+    """
+    track_ids = set()
+    for chunk in chunks:
+        chunk["track_id"] = chunk["track_id"].astype("str").str.strip().str.upper()
+        track_ids.update(chunk["track_id"].to_numpy())
+    return list(track_ids)
 
 
 if __name__ == "__main__":
