@@ -1,6 +1,12 @@
+"""
+Script that creates a subset of the msd_summary_file.
+module: main
+"""
+
 import h5py
 import random
 import pandas as pd
+import numpy as np
 import os
 from dotenv import load_dotenv
 
@@ -11,6 +17,31 @@ HDF5_PATH = os.getenv("HDF5_PATH")
 OUTPUT_PATH = os.getenv("OUTPUT_PATH")
 NUM_CSV_TRACKS = int(os.getenv("NUM_CSV_TRACKS"))
 NUM_EXTRA_TRACKS = int(os.getenv("NUM_EXTRA_TRACKS"))
+
+# Only copy data that is needed for the seed script.
+DATASETS_TO_COPY = {
+    "analysis": ["songs"],
+    "metadata": ["songs"],
+}
+
+ANALYSIS_FIELDS = ["track_id"]
+METADATA_FIELDS = ["release", "release_7digitalid"]
+
+
+def _filter_structured_array(
+    arr: np.ndarray,
+    fields: list[str],
+    indices: list[int],
+) -> np.ndarray:
+    """Return a new structured array containing only `fields` at `indices`."""
+    import numpy as np
+
+    sub = arr[indices]
+    dtype = [(f, sub.dtype[f]) for f in fields if f in sub.dtype.names]
+    out = np.empty(len(sub), dtype=dtype)
+    for f, _ in dtype:
+        out[f] = sub[f]
+    return out
 
 
 def create_subset_hdf5(
@@ -38,9 +69,9 @@ def create_subset_hdf5(
     # Step 2: Open the original HDF5 file and find the indices of the CSV tracks
     with h5py.File(original_hdf5_path, "r") as f:
         # Read track_ids from the analysis/songs dataset
-        analysis_data = f["analysis"]["songs"][:]
+        analysis_songs: h5py.Dataset = f["analysis"]["songs"]
         track_ids = [
-            tid.decode("utf-8").strip().upper() for tid in analysis_data["track_id"]
+            tid.decode("utf-8").strip().upper() for tid in analysis_songs["track_id"]
         ]
 
         # Find the indices of the CSV tracks
@@ -84,12 +115,23 @@ def create_subset_hdf5(
                 # Extract rows for the subset_indices
                 subset_data[group_name][dataset_name] = dataset[subset_indices]
 
-    # Step 5: Write the subset to a new HDF5 file
+        # Step 5: Extract only the needed fields for each group.
+        analysis_subset = _filter_structured_array(
+            analysis_songs[:], ANALYSIS_FIELDS, subset_indices
+        )
+
+        metadata_songs: h5py.Dataset = f["metadata"]["songs"]
+        metadata_subset = _filter_structured_array(
+            metadata_songs[:], METADATA_FIELDS, subset_indices
+        )
+
+    # Step 6: Write the subset to a new HDF5 file
     with h5py.File(output_hdf5_path, "w") as f_out:
-        for group_name, datasets in subset_data.items():
-            group = f_out.create_group(group_name)
-            for dataset_name, data in datasets.items():
-                group.create_dataset(dataset_name, data=data)
+        analysis_group = f_out.create_group("analysis")
+        analysis_group.create_dataset("songs", data=analysis_subset)
+
+        metadata_group = f_out.create_group("metadata")
+        metadata_group.create_dataset("songs", data=metadata_subset)
 
     print(f"Subset HDF5 file saved to: {output_hdf5_path}")
 
