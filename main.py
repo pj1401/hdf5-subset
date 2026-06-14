@@ -1,6 +1,13 @@
+"""
+Script that creates a subset of the msd_summary_file.
+module: main
+"""
+
+from collections.abc import Iterator
 import h5py
 import random
 import pandas as pd
+import numpy as np
 import os
 from dotenv import load_dotenv
 
@@ -11,6 +18,16 @@ HDF5_PATH = os.getenv("HDF5_PATH")
 OUTPUT_PATH = os.getenv("OUTPUT_PATH")
 NUM_CSV_TRACKS = int(os.getenv("NUM_CSV_TRACKS"))
 NUM_EXTRA_TRACKS = int(os.getenv("NUM_EXTRA_TRACKS"))
+CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", 5000))
+
+# Only copy data that is needed for the seed script.
+DATASETS_TO_COPY = {
+    "analysis": ["songs"],
+    "metadata": ["songs"],
+}
+
+ANALYSIS_FIELDS = ["track_id"]
+METADATA_FIELDS = ["release", "release_7digitalid"]
 
 
 def create_subset_hdf5(
@@ -31,67 +48,142 @@ def create_subset_hdf5(
         num_extra_tracks: Number of additional random tracks to include.
     """
     # Step 1: Get the first n track_ids from the CSV
-    csv_df = pd.read_csv(csv_path, nrows=num_csv_tracks)  # Read only the first n rows
-    csv_track_ids = csv_df["track_id"].str.strip().str.upper().tolist()
-    print(f"First {num_csv_tracks} track_ids in CSV: {csv_track_ids}")
+    csv_chunks = _read_csv_music_info(csv_path, num_csv_tracks, CHUNK_SIZE)
+    csv_track_ids = _get_csv_track_ids(csv_chunks)
+    print(f"Read {len(csv_track_ids)} track_ids from CSV.")
 
     # Step 2: Open the original HDF5 file and find the indices of the CSV tracks
     with h5py.File(original_hdf5_path, "r") as f:
         # Read track_ids from the analysis/songs dataset
-        analysis_data = f["analysis"]["songs"][:]
+        analysis_songs: h5py.Dataset = f["analysis"]["songs"]
         track_ids = [
-            tid.decode("utf-8").strip().upper() for tid in analysis_data["track_id"]
+            tid.decode("utf-8").strip().upper() for tid in analysis_songs["track_id"]
         ]
+        total_tracks = len(track_ids)
 
-        # Find the indices of the CSV tracks
-        csv_indices = []
-        for track_id in csv_track_ids:
-            try:
-                index = track_ids.index(track_id)
-                csv_indices.append(index)
-            except ValueError:
-                print(f"Warning: Track ID {track_id} not found in the HDF5 file.")
+        # Step 3: Find the indices of the CSV tracks
+        csv_indices = _get_csv_indices(csv_track_ids, track_ids)
+        print(f"Found {len(csv_indices)} CSV track IDs in HDF5 data.")
 
-        if not csv_indices:
-            raise ValueError(
-                f"None of the first {num_csv_tracks} track IDs from the CSV were found in the HDF5 file."
-            )
-
-        print(f"Found CSV tracks at indices: {csv_indices}")
-
-        # Step 3: Randomly sample additional track indices
-        all_indices = list(
-            set(range(len(track_ids))) - set(csv_indices)
-        )  # Exclude CSV tracks
-        extra_indices = random.sample(
-            all_indices, min(num_extra_tracks, len(all_indices))
+        # Step 4: Randomly sample additional track indices
+        subset_indices = _get_subset_indices(
+            csv_indices, total_tracks, num_extra_tracks
         )
 
-        # Combine the indices
-        subset_indices = csv_indices + extra_indices
-        subset_indices = sorted(set(subset_indices))  # Remove duplicates and sort
-
-        print(
-            f"Selected {len(subset_indices)} tracks for subset (including {len(csv_indices)} CSV tracks)."
+        # Step 5: Extract only the needed fields for each group.
+        analysis_subset = _filter_structured_array(
+            analysis_songs[:], ANALYSIS_FIELDS, subset_indices
         )
 
-        # Step 4: Extract data for these indices from all groups
-        subset_data = {}
-        for group_name in f.keys():
-            subset_data[group_name] = {}
-            for dataset_name in f[group_name].keys():
-                dataset = f[group_name][dataset_name]
-                # Extract rows for the subset_indices
-                subset_data[group_name][dataset_name] = dataset[subset_indices]
+        metadata_songs: h5py.Dataset = f["metadata"]["songs"]
+        metadata_subset = _filter_structured_array(
+            metadata_songs[:], METADATA_FIELDS, subset_indices
+        )
 
-    # Step 5: Write the subset to a new HDF5 file
+    # Step 6: Write the subset to a new HDF5 file
     with h5py.File(output_hdf5_path, "w") as f_out:
-        for group_name, datasets in subset_data.items():
-            group = f_out.create_group(group_name)
-            for dataset_name, data in datasets.items():
-                group.create_dataset(dataset_name, data=data)
+        analysis_group = f_out.create_group("analysis")
+        analysis_group.create_dataset("songs", data=analysis_subset)
+
+        metadata_group = f_out.create_group("metadata")
+        metadata_group.create_dataset("songs", data=metadata_subset)
 
     print(f"Subset HDF5 file saved to: {output_hdf5_path}")
+
+
+def _read_csv_music_info(
+    file_path: str, nrows: int, chunk_size: int
+) -> Iterator[pd.DataFrame]:
+    """
+    Read the CSV music info file.
+
+    :param file_path: Path to the CSV file.
+    :type file_path: str
+    :param nrows: Number of tracks from the CSV file.
+    :type nrows: int
+    :param chunk_size: The number of rows in each chunk.
+    :type chunk_size: int
+    :return: An Iterator with the music info chunks.
+    :rtype: Iterator[DataFrame]
+    """
+    return pd.read_csv(
+        file_path, nrows=nrows, chunksize=chunk_size, usecols=["track_id"]
+    )
+
+
+def _get_csv_track_ids(chunks: Iterator[pd.DataFrame]) -> list[str]:
+    """
+    Get a list of track IDs from the music info chunks.
+
+    :param chunks: An Iterator with the music info chunks.
+    :type chunks: Iterator[pd.DataFrame]
+    :return: A list of track IDs.
+    :rtype: list[str]
+    """
+    track_ids = set()
+    for chunk in chunks:
+        chunk["track_id"] = chunk["track_id"].astype("str").str.strip().str.upper()
+        track_ids.update(chunk["track_id"].to_numpy())
+    return list(track_ids)
+
+
+def _get_csv_indices(csv_track_ids: list[str], track_ids: list[str]) -> list[int]:
+    """
+    Get the indices of the CSV tracks in the HDF5 file.
+    """
+    csv_indices = []
+    for track_id in csv_track_ids:
+        try:
+            index = track_ids.index(track_id)
+            csv_indices.append(index)
+        except ValueError:
+            print(f"Warning: Track ID {track_id} not found in the HDF5 file.")
+
+    if not csv_indices:
+        raise ValueError(
+            f"None of the first {len(csv_track_ids)} track IDs from the CSV were found in the HDF5 file."
+        )
+    return csv_indices
+
+
+def _get_subset_indices(
+    csv_indices: list[int], total_tracks: int, num_extra_tracks: int
+) -> list[int]:
+    """
+    Get the indices for the subset.
+    """
+    csv_set = set(csv_indices)
+
+    # List of indexes that are not listed in the CSV file.
+    remaining = [i for i in range(total_tracks) if i not in csv_set]
+
+    # Randomise extra indices.
+    extra_indices = random.sample(remaining, min(num_extra_tracks, len(remaining)))
+
+    # Join sets and sort.
+    subset_indices = sorted(csv_set | set(extra_indices))
+
+    print(
+        f"Selected {len(subset_indices)} tracks for subset "
+        f"({len(csv_indices)} from CSV, {len(extra_indices)} random)."
+    )
+    return subset_indices
+
+
+def _filter_structured_array(
+    arr: np.ndarray,
+    fields: list[str],
+    indices: list[int],
+) -> np.ndarray:
+    """Return a new structured array containing only `fields` at `indices`."""
+    import numpy as np
+
+    sub = arr[indices]
+    dtype = [(f, sub.dtype[f]) for f in fields if f in sub.dtype.names]
+    out = np.empty(len(sub), dtype=dtype)
+    for f, _ in dtype:
+        out[f] = sub[f]
+    return out
 
 
 if __name__ == "__main__":
