@@ -17,7 +17,7 @@ CSV_PATH = os.getenv("CSV_PATH")
 HDF5_PATH = os.getenv("HDF5_PATH")
 OUTPUT_PATH = os.getenv("OUTPUT_PATH")
 NUM_CSV_TRACKS = int(os.getenv("NUM_CSV_TRACKS"))
-NUM_EXTRA_TRACKS = int(os.getenv("NUM_EXTRA_TRACKS"))
+NUM_EXTRA_TRACKS = int(os.getenv("NUM_EXTRA_TRACKS", 0))
 CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", 5000))
 
 # Only copy data that is needed for the seed script.
