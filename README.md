@@ -23,6 +23,12 @@ cd hdf5-subset
 cp .example.env .env
 ```
 
+Set .venv and install dependencies
+
+```bash
+uv sync --group dev
+```
+
 Run the script:
 
 ```bash
