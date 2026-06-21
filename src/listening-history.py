@@ -33,7 +33,12 @@ def create_listening_history_subset(
         subset = listening_history[listening_history["track_id"].isin(track_ids)]
 
         # Save the subset to a new CSV file
-        subset.to_csv(output_csv_path, index=False, mode="a", header=not os.path.exists(output_csv_path))
+        subset.to_csv(
+            output_csv_path,
+            index=False,
+            mode="a",
+            header=not os.path.exists(output_csv_path),
+        )
 
     print(f"Listening history subset saved to: {output_csv_path}")
 
