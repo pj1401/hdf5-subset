@@ -1,5 +1,13 @@
 import pandas as pd
+import os
+from dotenv import load_dotenv
 
+load_dotenv()
+
+CSV_PATH = os.getenv("CSV_PATH")
+NUM_CSV_TRACKS = int(os.getenv("NUM_CSV_TRACKS"))
+CSV_LISTENING_HISTORY_PATH = os.getenv("CSV_LISTENING_HISTORY_PATH")
+LISTENING_HISTORY_OUTPUT_PATH = os.getenv("LISTENING_HISTORY_OUTPUT_PATH")
 
 def create_listening_history_subset(
     original_csv_path: str, track_ids: list, output_csv_path: str
@@ -26,11 +34,11 @@ def create_listening_history_subset(
 
 
 if __name__ == "__main__":
-    original_csv_path = "data/User Listening History.csv"
-    output_csv_path = "output/listening-history-subset.csv"
+    original_csv_path = CSV_LISTENING_HISTORY_PATH
+    output_csv_path = LISTENING_HISTORY_OUTPUT_PATH
 
-    # Get the first 10 track IDs from the CSV
-    csv_df = pd.read_csv("data/Music Info.csv", nrows=10)
+    # Get the first n track IDs from the CSV
+    csv_df = pd.read_csv(CSV_PATH, nrows=NUM_CSV_TRACKS)
     track_ids = csv_df["track_id"].str.strip().str.upper().tolist()
 
     create_listening_history_subset(original_csv_path, track_ids, output_csv_path)
